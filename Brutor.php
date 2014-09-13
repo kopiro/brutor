@@ -89,14 +89,16 @@ class Brutor {
 			$wait = false;
 
 			$this->enableTor();
-			echo "Making requests this IP: " . $this->getIP() . "\n";
+			echo "New IP is " . $this->getIP() . "\n";
 
 			for ($j=0; $j<$this->opt['times_per_ip']; $j++) {
 
 				echo "Making CURL request...\n";
 				$response = $this->curlRequest($this->opt['curl_request']);
 
-				if (call_user_func($this->opt['curl_continue_per_ip'], $response)) {
+				$continue = call_user_func($this->opt['curl_continue_per_ip'], $response);
+
+				if ($continue) {
 
 					$wait = true;
 					echo "Request has succeded!\n";
