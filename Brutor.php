@@ -38,7 +38,7 @@ class Brutor {
 
 	protected function curlRequest($string) {
 		if ($this->opt['random_ua']) {
-			$string .= " -H 'User-agent: " . $this->getRandomUserAgent();
+			$string .= " -H 'User-agent: {$this->getRandomUserAgent()}' ";
 		}
 
 		exec("curl $string --silent --compressed --proxy socks5h://127.0.0.1:9050", $output);
