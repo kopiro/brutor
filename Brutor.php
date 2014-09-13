@@ -96,7 +96,7 @@ class Brutor {
 				echo "Making CURL request...\n";
 				$response = $this->curlRequest($this->opt['curl_request']);
 
-				$continue = call_user_func($this->opt['curl_continue_per_ip'], $response);
+				$continue = !!call_user_func($this->opt['curl_continue_per_ip'], $response);
 
 				if ($continue) {
 
@@ -106,7 +106,7 @@ class Brutor {
 
 				} else {
 
-					echo "Request has failed caused by 'curl_continue_per_ip' callback.\n";
+					echo "Request has failed - caused by 'curl_continue_per_ip' callback.\n";
 					break;
 
 				}
