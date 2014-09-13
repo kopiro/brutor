@@ -16,6 +16,7 @@ $b = new Brutor([
 	'sleep' => 120,
 	'random_ua'	=> true,
 	'curl_request'	=> "'http://www.google.com' -X POST -H 'Origin: http://www.google.com'",
+	'curl_continue' => function() { return true; },
 	'curl_continue_per_ip' => function($resp) {
 		return !!preg_match("/something/i", $resp);
 	}
@@ -29,6 +30,10 @@ $b->start();
 ##### `curl_request`
 
 The CURL shell request
+
+##### `curl_continue`
+
+A callback that parses (optionally) the request and can break the entire cycle
 
 ##### `curl_continue_per_ip`
 
