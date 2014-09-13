@@ -33,7 +33,7 @@ class Brutor {
 	}
 
 	public function getRandomUserAgent() {
-		return static::$user_agents[ rand(0, count(static::$user_agents)) ];
+		return static::$user_agents[ rand(0, -1+count(static::$user_agents)) ];
 	}
 
 	protected function curlRequest($string) {

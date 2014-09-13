@@ -1,3 +1,9 @@
+### Installation
+
+Install `tor` first.
+
+On Mac OS X, install typing `brew install tor`.
+
 ### Example
 
 ```php
