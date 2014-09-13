@@ -87,7 +87,7 @@ class Brutor {
 
 	public function start() {
 		for ($i=0; $this->opt['times']==='forever' ? true : $i<$this->opt['times']; $i++) {
-			$wait = false;
+			$wait_per_ip = false;
 
 			$this->enableTor();
 			echo "New IP is " . $this->getIP() . "\n";
@@ -111,13 +111,13 @@ class Brutor {
 					break 1;
 				}
 
-				$wait = true;
+				$wait_per_ip = true;
 				sleep($this->opt['sleep_per_ip']);
 			}
 
 			$this->disableTor();
 
-			if ($wait) {
+			if ($wait_per_ip) {
 				sleep($this->opt['sleep']);
 			}
 		}
