@@ -23,7 +23,8 @@ class Brutor {
 	public function __construct($opt=[]) {
 		$this->opt = array_merge([
 			'curl_request' => '',
-			'curl_parser'	=> function(){ return true; },
+			'curl_continue_per_ip'	=> function(){ return true; },
+			'curl_continue'			=> function() { return true; },
 			'times_per_ip' => 1,
 			'times'			=> 3,
 			'sleep_per_ip'	=> 1,
@@ -92,32 +93,36 @@ class Brutor {
 			echo "New IP is " . $this->getIP() . "\n";
 
 			for ($j=0; $j<$this->opt['times_per_ip']; $j++) {
-
 				echo "Making CURL request...\n";
 				$response = $this->curlRequest($this->opt['curl_request']);
 
-				$continue = !!call_user_func($this->opt['curl_continue_per_ip'], $response);
+				echo "Request has succeded!\n";
 
-				if ($continue) {
+				$continue = !!call_user_func($this->opt['curl_continue'], $response);
+				$continue_per_ip = !!call_user_func($this->opt['curl_continue_per_ip'], $response);
 
-					$wait = true;
-					echo "Request has succeded!\n";
-					sleep($this->opt['sleep_per_ip']);
-
-				} else {
-
-					echo "Request has failed - caused by 'curl_continue_per_ip' callback.\n";
-					break;
-
+				if ( ! $continue) {
+					echo "Breaking caused by 'curl_continue' callback.\n";
+					break 2;
 				}
 
+				if ( ! $continue_per_ip) {
+					echo "Breaking caused by 'curl_continue_per_ip' callback.\n";
+					break 1;
+				}
+
+				$wait = true;
+				sleep($this->opt['sleep_per_ip']);
 			}
 
 			$this->disableTor();
+
 			if ($wait) {
 				sleep($this->opt['sleep']);
 			}
 		}
+
+		echo "Finished.\n";
 	}
 
 }
