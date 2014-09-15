@@ -20,60 +20,67 @@ class Brutor {
 
 	public $opt = [];
 
+	private static $tor_port = "9999";
+	private static $tor_log = '/tmp/tor.log';
+	private static $tor_max_attempt = 8;
+
 	public function __construct($opt=[]) {
 		$this->opt = array_merge([
-			'curl_request' => '',
+			'curl_request' 			=> '',
 			'curl_continue_per_ip'	=> function(){ return true; },
 			'curl_continue'			=> function() { return true; },
-			'times_per_ip' => 1,
-			'times'			=> 3,
-			'sleep_per_ip'	=> 1,
-			'sleep'			=> 10,
-			'random_ua'		=> true
+			'times_per_ip' 			=> 1,
+			'times'						=> 3,
+			'sleep_per_ip'				=> 1,
+			'sleep'						=> 10,
+			'random_ua'					=> true
 		], (array)$opt);
+
+		if (empty($this->opt['curl_request'])) {
+			throw new Exception("CURL request can't be empty!");
+		}
 	}
 
 	public function getRandomUserAgent() {
-		return static::$user_agents[ rand(0, -1+count(static::$user_agents)) ];
+		return static::$user_agents[ array_rand(static::$user_agents) ];
 	}
 
 	protected function curlRequest($string) {
 		if ($this->opt['random_ua']) {
-			$string .= " -H 'User-agent: {$this->getRandomUserAgent()}' ";
+			$string .= " -H 'User-agent: " . $this->getRandomUserAgent() . "' ";
 		}
 
-		exec("curl $string --silent --compressed --proxy socks5h://127.0.0.1:9050", $output);
+		exec(sprintf("curl %s --silent --compressed --proxy socks5h://127.0.0.1:%s", $string, static::$tor_port), $output);
 		return implode("\n", $output);
 	}
 
 	protected function enableTor() {
-		unlink('tor.log');
+		@unlink(static::$tor_log);
 		$this->tor_pid = pcntl_fork();
 
-		if (-1===$this->tor_pid) {
-			throw new Exception('Unable to fork process for TOR.');
-		}
+		if (-1===$this->tor_pid) throw new Exception('Tor failed to start: unable to fork process.');
+		if (0===$this->tor_pid) $this->startTorProcess();
 
-		if (0===$this->tor_pid) {
-			$this->startTorProcess();
-		}
-
-		$this->waitForTorNetwork();
+		$this->waitTorBootstrapped();
 	}
 
 	protected function disableTor() {
 		$this->killTorProcess();
 	}
 
-	private function waitForTorNetwork() {
-		while (empty(
-			exec('if [ -f tor.log ]; then cat tor.log | grep "Bootstrapped 100%"; fi'))
-		) sleep(1);
+	private function waitTorBootstrapped() {
+		$attempt = 0;
+		while (empty(exec('if [ -f ' . static::$tor_log . ' ]; then cat ' . static::$tor_log . ' | grep "Bootstrapped 100%"; fi'))) {
+			if ($attempt>static::$tor_max_attempt) throw new Exception("Tor failed to start: activation timeout");
+
+			sleep(1);
+			$attempt++;
+		}
 	}
 
 	private function startTorProcess() {
 		$this->killTorProcess();
-		exec('tor > tor.log');
+		exec('tor -f ' . escapeshellarg(__DIR__.'/torrc') . ' > ' . static::$tor_log);
 		exit;
 	}
 
@@ -89,36 +96,41 @@ class Brutor {
 		for ($i=0; $this->opt['times']==='forever' ? true : $i<$this->opt['times']; $i++) {
 			$wait_per_ip = false;
 
-			$this->enableTor();
-			echo "New IP is " . $this->getIP() . "\n";
+			try {
+				$this->enableTor();
 
-			for ($j=0; $j<$this->opt['times_per_ip']; $j++) {
-				echo "Making CURL request...\n";
-				$response = $this->curlRequest($this->opt['curl_request']);
+				echo "New IP is " . $this->getIP() . "\n";
 
-				echo "Request has succeded!\n";
+				for ($j=0; $j<$this->opt['times_per_ip']; $j++) {
+					echo "Making CURL request...\n";
+					$response = $this->curlRequest($this->opt['curl_request']);
 
-				$continue = !!call_user_func($this->opt['curl_continue'], $response);
-				$continue_per_ip = !!call_user_func($this->opt['curl_continue_per_ip'], $response);
+					echo "Request has succeded!\n";
 
-				if ( ! $continue) {
-					echo "Breaking caused by 'curl_continue' callback.\n";
-					break 2;
+					$continue = !!call_user_func($this->opt['curl_continue'], $response);
+					$continue_per_ip = !!call_user_func($this->opt['curl_continue_per_ip'], $response);
+
+					if ( ! $continue) {
+						echo "Breaking (global) caused by 'curl_continue' callback.\n";
+						break 2;
+					}
+
+					if ( ! $continue_per_ip) {
+						echo "Breaking (per IP) caused by 'curl_continue_per_ip' callback.\n";
+						break 1;
+					}
+
+					$wait_per_ip = true;
+					sleep($this->opt['sleep_per_ip']);
 				}
 
-				if ( ! $continue_per_ip) {
-					echo "Breaking caused by 'curl_continue_per_ip' callback.\n";
-					break 1;
+				$this->disableTor();
+
+				if ($wait_per_ip) {
+					sleep($this->opt['sleep']);
 				}
-
-				$wait_per_ip = true;
-				sleep($this->opt['sleep_per_ip']);
-			}
-
-			$this->disableTor();
-
-			if ($wait_per_ip) {
-				sleep($this->opt['sleep']);
+			} catch (Exception $e) {
+				echo $e->getMessage() . "\n";
 			}
 		}
 
