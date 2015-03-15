@@ -1,48 +1,53 @@
 <?php
 
+include 'Console.php';
+
 class Brutor {
 
-	public static $user_agents = [
-	"Mozilla/6.0 (Windows NT 6.2; WOW64; rv:16.0.1) Gecko/20121011 Firefox/16.0.1",
-	"Mozilla/5.0 (Windows NT 6.2; WOW64; rv:16.0.1) Gecko/20121011 Firefox/16.0.1",
-	"Mozilla/5.0 (Windows NT 6.2; Win64; x64; rv:16.0.1) Gecko/20121011 Firefox/16.0.1",
-	"Mozilla/5.0 (Windows NT 6.1; Win64; x64; rv:14.0) Gecko/20120405 Firefox/14.0a1",
-	"Mozilla/5.0 (Windows NT 6.1; rv:14.0) Gecko/20120405 Firefox/14.0a1",
-	"Mozilla/5.0 (Windows NT 5.1; rv:14.0) Gecko/20120405 Firefox/14.0a1",
-	"Mozilla/5.0 (Windows NT 6.2; WOW64) AppleWebKit/537.13 (KHTML, like Gecko) Chrome/24.0.1290.1 Safari/537.13",
-	"Mozilla/5.0 (Windows NT 6.2) AppleWebKit/537.13 (KHTML, like Gecko) Chrome/24.0.1290.1 Safari/537.13",
-	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_8_2) AppleWebKit/537.13 (KHTML, like Gecko) Chrome/24.0.1290.1 Safari/537.13",
-	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_7_4) AppleWebKit/537.13 (KHTML, like Gecko) Chrome/24.0.1290.1 Safari/537.13",
-	"Mozilla/5.0 (Windows NT 6.2) AppleWebKit/536.3 (KHTML, like Gecko) Chrome/19.0.1061.1 Safari/536.3",
-	"Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/536.3 (KHTML, like Gecko) Chrome/19.0.1061.1 Safari/536.3",
-	"Mozilla/5.0 (Windows NT 6.1) AppleWebKit/536.3 (KHTML, like Gecko) Chrome/19.0.1061.1 Safari/536.3%",
-	];
+	protected $user_agents = [];
+	protected $tor_config = null;
+	protected $opt = [];
 
-	public $opt = [];
+	public function __construct($opt = []) {
 
-	private static $tor_port = "9999";
-	private static $tor_log = '/tmp/tor.log';
-	private static $tor_max_attempt = 8;
-
-	public function __construct($opt=[]) {
 		$this->opt = array_merge([
-			'curl_request' 			=> '',
-			'curl_continue_per_ip'	=> function(){ return true; },
-			'curl_continue'			=> function() { return true; },
-			'times_per_ip' 			=> 1,
-			'times'						=> 3,
-			'sleep_per_ip'				=> 1,
-			'sleep'						=> 10,
-			'random_ua'					=> true
+		'curl_request' 			=> '',
+		'curl_continue_per_ip'	=> function(){ return true; },
+		'curl_continue'			=> function(){ return true; },
+		'times_per_ip' 			=> 1,
+		'times'						=> 3,
+		'sleep_per_ip'				=> 1,
+		'sleep'						=> 10,
+		'random_ua'					=> true
 		], (array)$opt);
 
 		if (empty($this->opt['curl_request'])) {
 			throw new Exception("CURL request can't be empty!");
 		}
+
+		$this->loadUserAgents();
+		$this->loadTorConfiguration();
+
+		@mkdir(__DIR__ . '/log');
+
+
 	}
 
-	public function getRandomUserAgent() {
-		return static::$user_agents[ array_rand(static::$user_agents) ];
+	protected function loadTorConfiguration() {
+		$this->tor_config = [];
+		foreach (@file(__DIR__ . '/torrc') ?: [] as $tor_opt) {
+			if (preg_match('/(\w+)\s+(.+)/', $tor_opt, $m)) {
+				$this->tor_config[ $m[1] ] = $m[2];
+			}
+		}
+	}
+
+	protected function loadUserAgents() {
+		$this->user_agents = @file(__DIR__ . '/ua.txt') ?: [];
+	}
+
+	protected function getRandomUserAgent() {
+		return $this->user_agents[ array_rand($this->user_agents) ];
 	}
 
 	protected function curlRequest($string) {
@@ -50,42 +55,64 @@ class Brutor {
 			$string .= " -H 'User-agent: " . $this->getRandomUserAgent() . "' ";
 		}
 
-		exec(sprintf("curl %s --silent --compressed --proxy socks5h://127.0.0.1:%s", $string, static::$tor_port), $output);
+		exec(sprintf(
+			"curl %s --silent --compressed --proxy socks5h://127.0.0.1:%s",
+			$string,
+			$this->tor_config['SocksPort'] ?: 9000
+		), $output);
 		return implode("\n", $output);
 	}
 
+
 	protected function enableTor() {
-		@unlink(static::$tor_log);
-		$this->tor_pid = pcntl_fork();
+		Console::writeLine('Enabling TOR...');
 
-		if (-1===$this->tor_pid) throw new Exception('Tor failed to start: unable to fork process.');
-		if (0===$this->tor_pid) $this->startTorProcess();
+		@unlink(__DIR__ . '/log/tor.txt');
 
-		$this->waitTorBootstrapped();
+		$tor_pid = pcntl_fork();
+		if ($tor_pid === -1) {
+			throw new Exception('Tor failed to start: unable to fork process.');
+		}
+
+		if ($tor_pid === 0) {
+			// Child
+			exec('tor -f torrc > log/tor.txt');
+			exit;
+		}
+
+
+		$this->tor_pid = $tor_pid;
+		$this->waitUntilTorIsBootstrapped();
 	}
 
 	protected function disableTor() {
-		$this->killTorProcess();
+		Console::writeLine('Disabling TOR.');
+		if ($this->tor_pid) posix_kill($this->tor_pid, 9);
+		exec('killall tor');
 	}
 
-	private function waitTorBootstrapped() {
-		$attempt = 0;
-		while (empty(exec('if [ -f ' . static::$tor_log . ' ]; then cat ' . static::$tor_log . ' | grep "Bootstrapped 100%"; fi'))) {
-			if ($attempt>static::$tor_max_attempt) throw new Exception("Tor failed to start: activation timeout");
+	protected function waitUntilTorIsBootstrapped() {
+		$warns = [];
+		while (true) {
 
 			sleep(1);
-			$attempt++;
+			$log_content = file_get_contents(__DIR__.'/log/tor.txt');
+
+			if (preg_match('/Bootstrapped 100%/', $log_content)) {
+				return true;
+			}
+
+			if (preg_match('/\[warn\] (.+)/', $log_content, $m)) {
+				if (!in_array($m[1], $warns)) {
+					$warns[] = $m[1];
+					Console::writeLine($m[1], ConsoleColor::cyan);
+				}
+			}
+
+			if (preg_match('/\[err\] (.+)/', $log_content, $m)) {
+				throw new Exception("Tor activation error: " . $m[1]);
+			}
 		}
-	}
-
-	private function startTorProcess() {
-		$this->killTorProcess();
-		exec('tor -f ' . escapeshellarg(__DIR__.'/torrc') . ' > ' . static::$tor_log);
-		exit;
-	}
-
-	protected function killTorProcess() {
-		system('killall tor 2&> /dev/null');
 	}
 
 	protected function getIP() {
@@ -93,30 +120,38 @@ class Brutor {
 	}
 
 	public function start() {
-		for ($i=0; $this->opt['times']==='forever' ? true : $i<$this->opt['times']; $i++) {
+		$this->requests_count = 0;
+
+		Console::writeTitle('Welcome to Brutor!');
+
+		for ($i=0; $this->opt['times'] === 'forever' ? true : $i < $this->opt['times']; $i++) {
 			$wait_per_ip = false;
+
+			Console::writeLine("\nProcessing new request (" . (++$this->requests_count) . ")", ConsoleColor::purple);
 
 			try {
 				$this->enableTor();
 
-				echo "New IP is " . $this->getIP() . "\n";
+				Console::write("New IP is: ");
+				$this->ip = $this->getIP();
+				Console::writeLine($this->ip, ConsoleColor::brown);
 
-				for ($j=0; $j<$this->opt['times_per_ip']; $j++) {
-					echo "Making CURL request...\n";
+				for ($j = 0; $j < $this->opt['times_per_ip']; $j++) {
+					Console::write("Making CURL request... ");
 					$response = $this->curlRequest($this->opt['curl_request']);
 
-					echo "Request has succeded!\n";
+					Console::writeLine("OK!", ConsoleColor::green);
 
-					$continue = !!call_user_func($this->opt['curl_continue'], $response);
-					$continue_per_ip = !!call_user_func($this->opt['curl_continue_per_ip'], $response);
-
-					if ( ! $continue) {
-						echo "Breaking (global) caused by 'curl_continue' callback.\n";
+					$continue = @call_user_func($this->opt['curl_continue'], $response) ?: false;
+					if ($continue == false) {
+						Console::writeLine("Breaking (globally) caused by 'curl_continue' callback.", ConsoleColor::cyan);
 						break 2;
 					}
 
-					if ( ! $continue_per_ip) {
-						echo "Breaking (per IP) caused by 'curl_continue_per_ip' callback.\n";
+					$continue_per_ip = false;
+					$continue_per_ip = @call_user_func($this->opt['curl_continue_per_ip'], $response) ?: false;
+					if ($continue_per_ip == false) {
+						Console::writeLine("Breaking (per IP) caused by 'curl_continue_per_ip' callback.", ConsoleColor::cyan);
 						break 1;
 					}
 
@@ -129,12 +164,12 @@ class Brutor {
 				if ($wait_per_ip) {
 					sleep($this->opt['sleep']);
 				}
+
 			} catch (Exception $e) {
-				echo $e->getMessage() . "\n";
+				Console::writeLine("\n" . $e->getMessage(), ConsoleColor::red);
+				$this->disableTor();
 			}
 		}
-
-		echo "Finished.\n";
 	}
 
 }
